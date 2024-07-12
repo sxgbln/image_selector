@@ -3,7 +3,7 @@ bl_info = {
     "blender": (4, 1, 0),
     "category": "Material",
     "author": "Your Name",
-    "version": (1, 0, 0),
+    "version": (1, 0, 1),
     "description": "Create materials with multiple image textures selected by the user",
     "location": "Properties > Material",
     "support": "COMMUNITY",
@@ -44,18 +44,16 @@ class IMAGE_OT_open_filebrowser(Operator, ImportHelper):
             
             nodes.clear()
 
-            previous_node = None
-            
-            diff_node = nodes.new("ShaderNodeBsdfDiffuse")
-            diff_node.location = (400, 0)
+            principled_node = nodes.new("ShaderNodeBsdfPrincipled")
+            principled_node.location = (400, 0)
             
             mat_output = nodes.new('ShaderNodeOutputMaterial')
             mat_output.location = (600, 100)
             
-            links.new(diff_node.outputs["BSDF"], mat_output.inputs["Surface"])
+            links.new(principled_node.outputs["BSDF"], mat_output.inputs["Surface"])
             
             value_node = nodes.new("ShaderNodeValue")
-            value_node.location = (300, 350)
+            value_node.location = (0, 400)
             
             tex_coord_node = nodes.new("ShaderNodeTexCoord")
             tex_coord_node.location = (-1100, 0)
@@ -67,26 +65,31 @@ class IMAGE_OT_open_filebrowser(Operator, ImportHelper):
             
             x_offset = -300
             y_offset = 300
-            y_spacing = -200
+            y_spacing = -300
             
             num_nodes = len(images)
             thresholds = [i - 0.1 for i in list(range(1, num_nodes + 1))[::-1]]
 
+            previous_color_node = None
+            previous_alpha_node = None
+
             for x in range(1, num_nodes + 1):
-                mix_node_location = (x_offset + (x * 200), y_offset + (x * y_spacing))
-                image_texture_node_location = (mix_node_location[0] - 300, mix_node_location[1])
+                # Color mixing nodes
+                mix_color_node_location = (x_offset + (x * 200), y_offset + (x * y_spacing))
+                image_texture_node_location = (mix_color_node_location[0] - 300, mix_color_node_location[1])
                 math_node_location = (image_texture_node_location[0] - 200, image_texture_node_location[1])
                 
-                mix_node = nodes.new("ShaderNodeMixRGB")
-                mix_node.location = mix_node_location
-                mix_node.name = f"MixRGB_Node_{x}"
-                mix_node.label = f"Mix RGB {x}"
+                mix_color_node = nodes.new("ShaderNodeMixRGB")
+                mix_color_node.location = mix_color_node_location
+                mix_color_node.name = f"MixRGB_Node_{x}"
+                mix_color_node.label = f"Mix RGB {x}"
                 
                 image_texture_node = nodes.new('ShaderNodeTexImage')
                 image_texture_node.location = image_texture_node_location
                 image_texture_node.name = f"img_Node_{x}"
                 image_texture_node.label = f"IMG Node {x}"
                 image_texture_node.image = bpy.data.images.load(images[x-1])
+                image_texture_node.image.alpha_mode = 'PREMUL'  # Set alpha to premultiplied
                 links.new(mapping_node.outputs["Vector"], image_texture_node.inputs["Vector"])
                 
                 math_node = nodes.new("ShaderNodeMath")
@@ -95,18 +98,34 @@ class IMAGE_OT_open_filebrowser(Operator, ImportHelper):
                 math_node.label = f"Math {x}"
                 math_node.operation = "GREATER_THAN"
                 math_node.inputs[1].default_value = thresholds[x-1]
-                links.new(math_node.outputs["Value"], mix_node.inputs["Fac"])
+                links.new(math_node.outputs["Value"], mix_color_node.inputs["Fac"])
                 links.new(value_node.outputs["Value"], math_node.inputs["Value"])
-                links.new(image_texture_node.outputs["Color"], mix_node.inputs["Color2"])
+                links.new(image_texture_node.outputs["Color"], mix_color_node.inputs["Color2"])
                 
-                if x == 1:
-                    links.new(mix_node.outputs["Color"], diff_node.inputs["Color"])
+                if previous_color_node is not None:
+                    links.new(mix_color_node.outputs["Color"], previous_color_node.inputs["Color1"])
+                else:
+                    links.new(mix_color_node.outputs["Color"], principled_node.inputs["Base Color"])
                 
-                if previous_node is not None:
-                    links.new(mix_node.outputs["Color"], previous_node.inputs["Color1"])
+                previous_color_node = mix_color_node
+
+                # Alpha mixing nodes
+                mix_alpha_node_location = (mix_color_node_location[0], mix_color_node_location[1] - 150)
+                mix_alpha_node = nodes.new("ShaderNodeMixRGB")
+                mix_alpha_node.location = mix_alpha_node_location
+                mix_alpha_node.blend_type = 'MIX'
+                mix_alpha_node.inputs[0].default_value = 1.0
                 
-                previous_node = mix_node
-            
+                links.new(image_texture_node.outputs["Alpha"], mix_alpha_node.inputs["Color2"])
+                links.new(math_node.outputs["Value"], mix_alpha_node.inputs["Fac"])
+
+                if previous_alpha_node is not None:
+                    links.new(mix_alpha_node.outputs["Color"], previous_alpha_node.inputs["Color1"])
+                else:
+                    links.new(mix_alpha_node.outputs["Color"], principled_node.inputs["Alpha"])
+                
+                previous_alpha_node = mix_alpha_node
+
             print("Nodes created and modified successfully!")
         else:
             print("No active object selected.")
